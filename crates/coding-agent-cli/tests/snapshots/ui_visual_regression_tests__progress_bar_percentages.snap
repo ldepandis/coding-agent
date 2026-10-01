@@ -1,9 +1,0 @@
----
-source: crates/coding-agent-cli/tests/ui_visual_regression_tests.rs
-expression: normalize_whitespace(&result)
----
-0%: position=0
-25%: position=25
-50%: position=50
-75%: position=75
-100%: position=100

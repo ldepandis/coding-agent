@@ -1,9 +1,0 @@
----
-source: crates/coding-agent-cli/tests/ui_visual_regression_tests.rs
-expression: normalize_whitespace(&clean)
----
-┌───────────────────────────────┐
-│ Line 1: First line of message │
-│ Line 2: Second line           │
-│ Line 3: Third line            │
-└───────────────────────────────┘

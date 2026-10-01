@@ -1,75 +1,56 @@
-# State Machine Architecture
+# State Machine
 
-The coding agent uses an event-driven state machine that separates logic from I/O.
+The C state machine lives in `libcodeagent/src/state_machine.c` and is exposed through
+`libcodeagent/include/codeagent/codeagent.h`.
 
-## Core Principle
+## Contract
 
-The `StateMachine` is **pure and synchronous**. It receives `AgentEvent`s and returns `AgentAction`s. The caller (runner) executes actions and feeds results back as events.
-
-```
-User Input → Event → StateMachine → Action → Runner executes → Event → ...
-```
+The state machine is deterministic and performs no I/O. Callers feed events into
+`ca_state_machine_handle()` and receive one `ca_agent_action` describing the side effect
+to perform.
 
 ## States
 
-| State | Description |
-|-------|-------------|
-| `WaitingForUserInput` | Idle, ready for user message |
-| `CallingLlm` | Making API request (tracks retry count) |
-| `ProcessingLlmResponse` | Transient state parsing LLM response |
-| `ExecutingTools` | Running tool calls from LLM |
-| `Error` | Recoverable error, will retry |
-| `ShuttingDown` | Terminal state |
+- `CA_STATE_WAITING_FOR_USER_INPUT`
+- `CA_STATE_CALLING_LLM`
+- `CA_STATE_PROCESSING_LLM_RESPONSE`
+- `CA_STATE_EXECUTING_TOOLS`
+- `CA_STATE_POST_TOOLS_HOOK`
+- `CA_STATE_ERROR`
+- `CA_STATE_SHUTTING_DOWN`
 
 ## Events
 
-- `UserInput(String)` - User submitted a message
-- `LlmCompleted { content, stop_reason }` - API call succeeded
-- `LlmError(String)` - API call failed
-- `ToolCompleted { call_id, result }` - Tool finished executing
-- `RetryTimeout` - Retry delay elapsed
-- `ShutdownRequested` - User requested quit
+- `CA_EVENT_USER_INPUT`
+- `CA_EVENT_LLM_COMPLETED`
+- `CA_EVENT_LLM_ERROR`
+- `CA_EVENT_TOOL_COMPLETED`
+- `CA_EVENT_HOOKS_COMPLETED`
+- `CA_EVENT_RETRY_TIMEOUT`
+- `CA_EVENT_SHUTDOWN_REQUESTED`
 
 ## Actions
 
-- `SendLlmRequest { messages }` - Call Claude API
-- `ExecuteTools { calls }` - Run specified tools
-- `DisplayText(String)` - Show text to user
-- `DisplayError(String)` - Show error to user
-- `PromptForInput` - Wait for user input
-- `ScheduleRetry { delay_ms }` - Wait then send RetryTimeout
-- `WaitForEvent` - No action needed
-- `Shutdown` - Terminate
+- `CA_ACTION_SEND_LLM_REQUEST`
+- `CA_ACTION_EXECUTE_TOOLS`
+- `CA_ACTION_RUN_POST_TOOLS_HOOKS`
+- `CA_ACTION_DISPLAY_TEXT`
+- `CA_ACTION_DISPLAY_ERROR`
+- `CA_ACTION_DISPLAY_WARNING`
+- `CA_ACTION_PROMPT_FOR_INPUT`
+- `CA_ACTION_SCHEDULE_RETRY`
+- `CA_ACTION_WAIT_FOR_EVENT`
+- `CA_ACTION_SHUTDOWN`
 
-## State Transitions
+## Ownership
 
-```
-WaitingForUserInput --UserInput--> CallingLlm --LlmCompleted--> ProcessingLlmResponse
-                                       |                              |
-                                       |                    +---------+---------+
-                                       |                    |                   |
-                                  LlmError              has tools           no tools
-                                       |                    |                   |
-                                       v                    v                   v
-                                    Error          ExecutingTools     WaitingForUserInput
-                                       |                    |
-                                  RetryTimeout        ToolCompleted
-                                       |               (all done)
-                                       v                    |
-                                  CallingLlm <--------------+
-```
+Actions returned from `ca_state_machine_handle()` own nested memory and must be released
+with `ca_agent_action_free()`.
 
-`ShutdownRequested` transitions to `ShuttingDown` from any state.
+Borrowed state returned by `ca_state_machine_state()` is valid only until the machine is
+mutated or freed.
 
-## Retry Logic
+## Tests
 
-- Max retries: 3
-- Exponential backoff: 1s, 2s, 3s
-- After max retries, returns to `WaitingForUserInput` with error message
-
-## Key Design Decisions
-
-1. **State machine is pure** - No I/O, no side effects, fully testable
-2. **Caller executes actions** - Runner handles API calls, tool execution, user I/O
-3. **Conversation travels with state** - Full message history in each state variant
-4. **Exhaustive matching** - Rust ensures all event/state combinations are handled
+State-machine behavior is covered by `libcodeagent/tests/test_main.c`. Every transition change must
+add or update C tests.

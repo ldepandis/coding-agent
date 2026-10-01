@@ -1,5 +1,0 @@
----
-source: crates/coding-agent-cli/tests/e2e/snapshot_tests.rs
-expression: clean_output
----
-File created successfully

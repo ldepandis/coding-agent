@@ -1,9 +1,0 @@
----
-source: crates/coding-agent-cli/tests/ui_visual_regression_tests.rs
-expression: normalize_whitespace(&clean)
----
-(10 lines)
-  line 0
-  line 1
-  line 2
-  ... (7 more lines)

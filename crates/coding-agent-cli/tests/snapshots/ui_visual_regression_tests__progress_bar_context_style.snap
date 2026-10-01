@@ -1,8 +1,0 @@
----
-source: crates/coding-agent-cli/tests/ui_visual_regression_tests.rs
-expression: normalize_whitespace(&result)
----
-Total: Some(200000)
-At 50k tokens: 25%
-At 120k tokens: 60%
-At 170k tokens: 85%

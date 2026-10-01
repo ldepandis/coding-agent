@@ -1,8 +1,0 @@
----
-source: crates/coding-agent-cli/tests/ui_visual_regression_tests.rs
-expression: normalize_whitespace(&clean)
----
-(3 matches)
-  src/main.rs: 10:fn main()
-  src/lib.rs: 25:pub fn test()
-  tests/integration.rs: 5:fn integration_test()

@@ -1,5 +1,0 @@
----
-source: crates/coding-agent-cli/tests/e2e/snapshot_tests.rs
-expression: clean_output
----
-Context: [█████████████████████████░░░░░]  85% used | 170k / 200k tokens

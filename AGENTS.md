@@ -1,75 +1,68 @@
 # AGENTS.md
 
-Guidelines for AI agents working on this codebase.
+Guidelines for AI agents working on this C-only codebase.
 
 ## Project Context
 
-This is a Rust workshop project building an AI coding assistant with an event-driven state machine architecture. The code prioritizes **testability**, **explicit state transitions**, and **educational clarity**.
+`codeagent` provides:
 
-## Working on the State Machine
+- `libcodeagent`, a reusable C99 AI coding-agent library;
+- `codeagentctl`, a terminal frontend.
 
-When modifying `src/machine.rs` or `src/state.rs`:
+GNU Autotools is the only supported build system. CMake and Rust have been removed.
 
-1. **Every state transition must be tested** - Add a unit test for any new transition
-2. **Keep the state machine pure** - No I/O operations; return `AgentAction` for the caller to execute
-3. **Exhaustive matching** - All event/state combinations must be handled explicitly
-4. **Update docs/STATE_MACHINE.md** - If adding states or events, update the design doc
+## Key Files
 
-## Adding New Tools
+1. `libcodeagent/include/codeagent/codeagent.h` - public API and ownership contracts
+2. `libcodeagent/src/state_machine.c` - pure state-machine transitions
+3. `libcodeagent/src/agent.c` - library-owned conversation loop
+4. `libcodeagent/src/tools.c` - built-in tools and external tool registry
+5. `libcodeagent/src/provider.h` - private provider interface
+6. `libcodeagent/providers/` - built-in providers
+7. `codeagentctl/src/` - codeagentctl frontend
+8. `libcodeagent/tests/test_main.c` - main C behavior tests
 
-Tools follow a consistent pattern (see `examples/` for reference):
+## Build And Test
 
-```rust
-// 1. Define input schema struct with schemars
-#[derive(Debug, Deserialize, JsonSchema)]
-struct MyToolInput {
-    required_field: String,
-    #[serde(default)]
-    optional_field: Option<String>,
-}
-
-// 2. Implement tool function
-fn my_tool(input: Value) -> Result<String, String> {
-    let params: MyToolInput = serde_json::from_value(input)
-        .map_err(|e| format!("Invalid input: {}", e))?;
-    // ... implementation
-    Ok("result".to_string())
-}
-
-// 3. Register with agent
-let tool = ToolDefinition {
-    name: "my_tool".to_string(),
-    description: "What the tool does".to_string(),
-    function: my_tool,
-    schema: generate_schema::<MyToolInput>(),
-};
+```sh
+./autogen.sh
+./configure
+make
+make check
 ```
 
-## Testing Strategy
+Quality targets:
 
-- **Unit tests**: In `#[cfg(test)]` module within each source file
-- **Integration tests**: In `tests/` directory, test full tool behavior
-- **Fixtures**: Use `fixtures/` for test data; use `tempfile` crate for temp files
+```sh
+make codeagent-clang-tidy
+make codeagent-cppcheck
+```
 
-Run tests with `make test` or `make test-verbose`.
+## State Machine
 
-## Code Style
+When modifying `libcodeagent/src/state_machine.c`:
 
-- Run `make fmt` before committing
-- Run `make lint` to catch common issues
-- Keep functions focused and small
-- Prefer explicit error messages over `.unwrap()`
+- keep transitions deterministic and free of I/O;
+- return actions for callers to execute;
+- add or update C tests for every changed transition;
+- update `docs/STATE_MACHINE.md` when states, events, or actions change.
 
-## Key Architectural Decisions
+## Public API
 
-1. **State machine over async loops** - Easier to test and reason about
-2. **Function pointers for tools** - Simple, no trait complexity
-3. **String errors** - Keeps examples approachable; production code might use `thiserror`
-4. **Conversation in state** - Full message history travels with state for multi-turn support
+When changing `libcodeagent/include/codeagent/codeagent.h`:
 
-## Files to Understand First
+- document ownership/lifetime next to every public function;
+- keep provider internals private;
+- prefer opaque handles for mutable subsystems;
+- preserve API/ABI versioning through `ca_version()` and `ca_abi_version()`.
 
-1. `docs/STATE_MACHINE.md` - State machine architecture
-2. `src/state.rs` - Core types (read this before machine.rs)
-3. `examples/chat.rs` - Simplest working example
-4. `src/machine.rs` - State transition logic with tests
+## Providers
+
+Provider modules are compiled into `libcodeagent`. Do not add runtime plugin loading.
+Provider-specific options must use the generic config option API.
+
+## Tools
+
+Built-in tools live in `libcodeagent/src/tools.c`. External tools are registered with
+`ca_tool_registry`. Tool output strings are allocated by the library and freed by callers
+with `ca_free()` unless the specific function documents otherwise.

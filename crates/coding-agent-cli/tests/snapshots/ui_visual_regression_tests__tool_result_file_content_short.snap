@@ -1,8 +1,0 @@
----
-source: crates/coding-agent-cli/tests/ui_visual_regression_tests.rs
-expression: normalize_whitespace(&clean)
----
-(3 lines)
-  fn main() {
-      println!("Hello, World!");
-  }
