@@ -17,28 +17,62 @@ static const char *skip_ws(const char *p) {
     return p;
 }
 
-static const char *find_json_key(const char *json, const char *key) {
-    ca_string_builder quoted;
-    const char *p;
-    char *needle;
+static const char *json_string_end(const char *p) {
+    p++;
+    while (*p != '\0') {
+        if (*p == '\\') {
+            p++;
+            if (*p == '\0') {
+                return NULL;
+            }
+            p++;
+            continue;
+        }
+        if (*p == '"') {
+            return p;
+        }
+        p++;
+    }
+    return NULL;
+}
 
-    ca_sb_init(&quoted);
-    if (ca_sb_append(&quoted, "\"") != CA_OK || ca_sb_append(&quoted, key) != CA_OK ||
-        ca_sb_append(&quoted, "\"") != CA_OK) {
-        ca_sb_free(&quoted);
+static int json_key_matches(const char *start, const char *end, const char *key) {
+    size_t key_len;
+    if (start == NULL || end == NULL || key == NULL) {
+        return 0;
+    }
+    key_len = strlen(key);
+    return (size_t)(end - start) == key_len && memcmp(start, key, key_len) == 0;
+}
+
+static int is_json_token_delimiter(char c) {
+    return c == '\0' || c == ',' || c == '}' || c == ']' || isspace((unsigned char)c);
+}
+
+static const char *find_json_key(const char *json, const char *key) {
+    const char *p;
+
+    if (json == NULL || key == NULL) {
         return NULL;
     }
-    needle = ca_sb_take(&quoted);
-    p = strstr(json, needle);
-    free(needle);
-    if (p == NULL) {
-        return NULL;
+
+    p = json;
+    while ((p = strchr(p, '"')) != NULL) {
+        const char *start = p + 1;
+        const char *end = json_string_end(p);
+        const char *after;
+
+        if (end == NULL) {
+            return NULL;
+        }
+
+        after = skip_ws(end + 1);
+        if (*after == ':' && json_key_matches(start, end, key)) {
+            return skip_ws(after + 1);
+        }
+        p = end + 1;
     }
-    p = strchr(p, ':');
-    if (p == NULL) {
-        return NULL;
-    }
-    return skip_ws(p + 1);
+    return NULL;
 }
 
 char *ca_json_escape(const char *text) {
@@ -152,11 +186,11 @@ ca_status ca_json_get_bool(const char *json, const char *key, int default_value,
         *value = default_value;
         return CA_OK;
     }
-    if (strncmp(p, "true", 4) == 0) {
+    if (strncmp(p, "true", 4) == 0 && is_json_token_delimiter(p[4])) {
         *value = 1;
         return CA_OK;
     }
-    if (strncmp(p, "false", 5) == 0) {
+    if (strncmp(p, "false", 5) == 0 && is_json_token_delimiter(p[5])) {
         *value = 0;
         return CA_OK;
     }

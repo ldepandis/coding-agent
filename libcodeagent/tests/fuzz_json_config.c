@@ -19,9 +19,21 @@ int main(void) {
         "{\"path\":123}",
         "{\"command\":\"printf hi\"}",
         "{\"pattern\":\"needle\",\"path\":\".\"}",
+        "{\"note\":\"fake \\\"path\\\":\\\"/tmp/owned\\\"\"}",
+        "{\"flag\":trueevil}",
         "[[[[[",
         "{\"unterminated\":\"value",
-        "{\"path\":\"\\xff\\xfe\"}"
+        "{\"path\":\"\\xff\\xfe\"}",
+        "{\"path\":\"../../../../etc/passwd\"}",
+        "{\"path\":\"/tmp/trusted/../escape\"}",
+        "{\"path\":\"/tmp/x\",\"path\":\"/etc/passwd\"}",
+        "{\"path\":\"/tmp/x\\u0000/etc/passwd\"}",
+        "{\"path\":[\"/etc/passwd\"]}",
+        "{\"command\":\"printf ok; touch /tmp/codeagent-fuzz-owned\"}",
+        "{\"command\":\"$(touch /tmp/codeagent-fuzz-owned)\"}",
+        "{\"pattern\":\".*\",\"path\":\"/\"}",
+        "{\"flag\":falsehood,\"path\":\"/tmp/x\"}",
+        "{\"note\":\"{\\\"command\\\":\\\"touch /tmp/codeagent-fuzz-owned\\\"}\"}"
     };
     size_t i;
     for (i = 0; i < sizeof(samples) / sizeof(samples[0]); i++) {

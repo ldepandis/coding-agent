@@ -8,11 +8,16 @@
 #include "internal.h"
 #include "provider.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 #define ASSERT_TRUE(expr)                                                                             \
     do {                                                                                              \
@@ -76,6 +81,23 @@ static int write_test_file(const char *path, const char *content) {
         return 1;
     }
     return fclose(file) == 0 ? 0 : 1;
+}
+
+static int file_equals(const char *path, const char *expected) {
+    FILE *file = fopen(path, "rb");
+    char buffer[128];
+    size_t n;
+    if (file == NULL) {
+        return 0;
+    }
+    n = fread(buffer, 1, sizeof(buffer) - 1, file);
+    if (ferror(file)) {
+        fclose(file);
+        return 0;
+    }
+    fclose(file);
+    buffer[n] = '\0';
+    return strcmp(buffer, expected) == 0;
 }
 
 static int test_builtin_tool_schemas_are_specific(void) {
@@ -148,6 +170,24 @@ static int test_bash_stdout_stderr_behavior(void) {
     return 0;
 }
 
+static int test_json_parser_ignores_keys_inside_strings(void) {
+    char *value = NULL;
+    char *output = NULL;
+    int flag = 0;
+
+    ASSERT_TRUE(ca_json_get_string("{\"note\":\"fake \\\"path\\\":\\\"/tmp/owned\\\"\"}", "path", &value) == CA_NOT_FOUND);
+    ASSERT_TRUE(value == NULL);
+
+    ASSERT_TRUE(ca_json_get_bool("{\"flag\":trueevil}", "flag", 0, &flag) == CA_JSON_ERROR);
+    ASSERT_TRUE(ca_json_get_bool("{\"flag\":falsehood}", "flag", 1, &flag) == CA_JSON_ERROR);
+
+    ASSERT_TRUE(ca_tool_read_file("{\"note\":\"\\\"path\\\":\\\"/etc/passwd\\\"\"}", &output, NULL) == CA_ERROR);
+    ASSERT_TRUE(output != NULL);
+    ASSERT_TRUE(strstr(output, "missing or invalid string field 'path'") != NULL);
+    free(output);
+    return 0;
+}
+
 static int test_code_search_uses_argv_and_limits_matches(void) {
     char dir[128];
     char file_path[160];
@@ -175,6 +215,11 @@ static int test_code_search_uses_argv_and_limits_matches(void) {
     ca_sb_free(&input);
     remove(file_path);
     rmdir(dir);
+
+    output = NULL;
+    ASSERT_TRUE(ca_tool_code_search("{\"pattern\":\"x\",\"case_sensitive\":trueevil}", &output, NULL) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "invalid boolean field 'case_sensitive'") != NULL);
+    free(output);
     return 0;
 }
 
@@ -221,7 +266,10 @@ static int test_write_edit_permission_checks(void) {
     output = NULL;
     ca_sb_free(&input);
 
-    ASSERT_TRUE(ca_config_add_trusted_path(&config, "/tmp/codeagent-permission-") == CA_OK);
+    ASSERT_TRUE(ca_config_add_trusted_path(&config, path) == CA_OK);
+    ASSERT_TRUE(ca_config_add_trusted_path(&config, "/tmp/allowed") == CA_OK);
+    ASSERT_TRUE(ca_permission_check_path(&config, "/tmp/allowed/file.txt", 1) == CA_PERMISSION_ALLOW);
+    ASSERT_TRUE(ca_permission_check_path(&config, "/tmp/allowed-but-not-really/file.txt", 1) != CA_PERMISSION_ALLOW);
     ca_sb_init(&input);
     ca_sb_appendf(&input, "{\"path\":\"%s\",\"content\":\"x\"}", path);
     ASSERT_TRUE(ca_tool_write_file(input.data, &output, &config) == CA_OK);
@@ -238,6 +286,162 @@ static int test_write_edit_permission_checks(void) {
     ca_sb_free(&input);
     remove(path);
     ca_config_free(&config);
+    return 0;
+}
+
+static int test_sandbox_modes_and_tool_enforcement(void) {
+    ca_config config;
+    ca_sandbox_mode mode = CA_SANDBOX_DISABLED;
+    ca_string_builder input;
+    char *output = NULL;
+
+    ASSERT_TRUE(ca_sandbox_mode_parse("read-only", &mode) == CA_OK);
+    ASSERT_TRUE(mode == CA_SANDBOX_READ_ONLY);
+    ASSERT_TRUE(ca_sandbox_mode_parse("workspace_write", &mode) == CA_OK);
+    ASSERT_TRUE(mode == CA_SANDBOX_WORKSPACE_WRITE);
+    ASSERT_TRUE(strcmp(ca_sandbox_mode_name(mode), "workspace_write") == 0);
+
+    ca_config_init_defaults(&config);
+    ASSERT_TRUE(ca_config_set_sandbox_mode(&config, CA_SANDBOX_WORKSPACE_WRITE) == CA_OK);
+
+    ASSERT_TRUE(ca_tool_read_file("{\"path\":\"/etc/passwd\"}", &output, &config) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "Sandbox denied") != NULL);
+    free(output);
+    output = NULL;
+
+    ASSERT_TRUE(ca_config_add_trusted_path(&config, "/tmp/codeagent-sandbox-trusted") == CA_OK);
+    ASSERT_TRUE(ca_tool_read_file("{\"path\":\"/tmp/codeagent-sandbox-trusted-but-not-really/file.txt\"}", &output, &config) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "Sandbox denied") != NULL);
+    free(output);
+    output = NULL;
+
+    ca_config_free(&config);
+    ca_config_init_defaults(&config);
+    ASSERT_TRUE(ca_config_set_sandbox_mode(&config, CA_SANDBOX_READ_ONLY) == CA_OK);
+    ca_sb_init(&input);
+    ca_sb_appendf(&input, "{\"path\":\"sandbox-%ld.txt\",\"content\":\"x\"}", (long)getpid());
+    ASSERT_TRUE(ca_tool_write_file(input.data, &output, &config) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "read-only mode blocks writes") != NULL);
+    free(output);
+    output = NULL;
+    ca_sb_free(&input);
+
+    ca_config_free(&config);
+    ca_config_init_defaults(&config);
+    ASSERT_TRUE(ca_config_set_sandbox_mode(&config, CA_SANDBOX_WORKSPACE_WRITE) == CA_OK);
+    ca_sb_init(&input);
+    ca_sb_appendf(&input, "{\"path\":\"sandbox-%ld.txt\",\"content\":\"x\"}", (long)getpid());
+    ASSERT_TRUE(ca_tool_write_file(input.data, &output, &config) == CA_PERMISSION_REQUIRED);
+    free(output);
+    output = NULL;
+    ca_sb_free(&input);
+    if (ca_sandbox_requires_native_process(&config)) {
+        ASSERT_TRUE(ca_tool_bash("{\"command\":\"echo sandbox\"}", &output, &config) == CA_ERROR);
+        ASSERT_TRUE(output != NULL && strstr(output, "requires native process sandbox support") != NULL);
+        free(output);
+        output = NULL;
+    }
+    ca_config_free(&config);
+    return 0;
+}
+
+static int test_sandbox_rejects_symlink_escape_attacks(void) {
+    ca_config config;
+    ca_string_builder input;
+    char original_cwd[PATH_MAX];
+    char workspace[160];
+    char outside[180];
+    char outside_hardlink[190];
+    char outside_dir[190];
+    char outside_dir_file[220];
+    char link_path[200];
+    char hardlink_path[210];
+    char dir_link_path[210];
+    char *output = NULL;
+
+    ASSERT_TRUE(getcwd(original_cwd, sizeof(original_cwd)) != NULL);
+    snprintf(workspace, sizeof(workspace), "/tmp/codeagent-sandbox-ws-%ld", (long)getpid());
+    snprintf(outside, sizeof(outside), "/tmp/codeagent-sandbox-outside-%ld.txt", (long)getpid());
+    snprintf(outside_hardlink, sizeof(outside_hardlink), "/tmp/codeagent-sandbox-hard-outside-%ld.txt", (long)getpid());
+    snprintf(outside_dir, sizeof(outside_dir), "/tmp/codeagent-sandbox-outside-dir-%ld", (long)getpid());
+    snprintf(outside_dir_file, sizeof(outside_dir_file), "%s/secret.txt", outside_dir);
+    snprintf(link_path, sizeof(link_path), "%s/escape.txt", workspace);
+    snprintf(hardlink_path, sizeof(hardlink_path), "%s/hard-escape.txt", workspace);
+    snprintf(dir_link_path, sizeof(dir_link_path), "%s/outside-dir", workspace);
+    remove(outside_dir_file);
+    remove(dir_link_path);
+    rmdir(outside_dir);
+    remove(hardlink_path);
+    remove(link_path);
+    remove(outside_hardlink);
+    remove(outside);
+    rmdir(workspace);
+
+    ASSERT_TRUE(mkdir(workspace, 0777) == 0);
+    ASSERT_TRUE(mkdir(outside_dir, 0777) == 0);
+    ASSERT_TRUE(write_test_file(outside, "do-not-touch") == 0);
+    ASSERT_TRUE(write_test_file(outside_hardlink, "hardlink-secret") == 0);
+    ASSERT_TRUE(write_test_file(outside_dir_file, "directory-secret") == 0);
+    ASSERT_TRUE(symlink(outside, link_path) == 0);
+    ASSERT_TRUE(symlink(outside_dir, dir_link_path) == 0);
+    ASSERT_TRUE(link(outside_hardlink, hardlink_path) == 0);
+
+    ca_config_init_defaults(&config);
+    ASSERT_TRUE(ca_config_set_sandbox_mode(&config, CA_SANDBOX_WORKSPACE_WRITE) == CA_OK);
+    ASSERT_TRUE(ca_config_add_trusted_path(&config, workspace) == CA_OK);
+
+    ca_sb_init(&input);
+    ca_sb_appendf(&input, "{\"path\":\"%s\"}", link_path);
+    ASSERT_TRUE(ca_tool_read_file(input.data, &output, &config) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "Sandbox denied") != NULL);
+    ASSERT_TRUE(strstr(output, "do-not-touch") == NULL);
+    free(output);
+    output = NULL;
+    ca_sb_free(&input);
+
+    ca_sb_init(&input);
+    ca_sb_appendf(&input, "{\"path\":\"%s\",\"content\":\"pwned\"}", link_path);
+    ASSERT_TRUE(ca_tool_write_file(input.data, &output, &config) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "Sandbox denied") != NULL);
+    ASSERT_TRUE(file_equals(outside, "do-not-touch"));
+    free(output);
+    output = NULL;
+    ca_sb_free(&input);
+
+    ca_sb_init(&input);
+    ca_sb_appendf(&input, "{\"path\":\"%s\",\"content\":\"hardlink-pwned\"}", hardlink_path);
+    ASSERT_TRUE(ca_tool_write_file(input.data, &output, &config) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "hardlink") != NULL);
+    ASSERT_TRUE(file_equals(outside_hardlink, "hardlink-secret"));
+    free(output);
+    output = NULL;
+    ca_sb_free(&input);
+
+    ca_sb_init(&input);
+    ca_sb_appendf(&input, "{\"path\":\"%s\"}", workspace);
+    ASSERT_TRUE(ca_tool_list_files(input.data, &output, &config) == CA_OK);
+    ASSERT_TRUE(output != NULL && strstr(output, "secret.txt") == NULL);
+    ASSERT_TRUE(strstr(output, "directory-secret") == NULL);
+    free(output);
+    output = NULL;
+    ca_sb_free(&input);
+
+    ASSERT_TRUE(chdir(workspace) == 0);
+    ASSERT_TRUE(ca_tool_read_file("{\"path\":\"escape.txt\"}", &output, &config) == CA_ERROR);
+    ASSERT_TRUE(output != NULL && strstr(output, "Sandbox denied") != NULL);
+    free(output);
+    output = NULL;
+    ASSERT_TRUE(chdir(original_cwd) == 0);
+
+    ca_config_free(&config);
+    remove(hardlink_path);
+    remove(link_path);
+    remove(dir_link_path);
+    remove(outside_hardlink);
+    remove(outside_dir_file);
+    rmdir(outside_dir);
+    remove(outside);
+    rmdir(workspace);
     return 0;
 }
 
@@ -895,7 +1099,10 @@ static int test_git_status_and_message(void) {
     char *rendered = NULL;
     char *message = NULL;
     char *groups = NULL;
+    char marker[160];
     snprintf(dir, sizeof(dir), "/tmp/codeagent-git-%ld", (long)getpid());
+    snprintf(marker, sizeof(marker), "/tmp/codeagent-git-injected-%ld", (long)getpid());
+    remove(marker);
     ASSERT_TRUE(mkdir(dir, 0777) == 0 || access(dir, F_OK) == 0);
     snprintf(cmd, sizeof(cmd), "git -C %s init >/dev/null 2>&1", dir);
     ASSERT_TRUE(system(cmd) == 0);
@@ -910,12 +1117,19 @@ static int test_git_status_and_message(void) {
     ASSERT_TRUE(strstr(message, "implementation") != NULL);
     ASSERT_TRUE(ca_git_group_summary(&status, &groups) == CA_OK);
     ASSERT_TRUE(strstr(groups, "implementation") != NULL);
+    {
+        char malicious[320];
+        snprintf(malicious, sizeof(malicious), "safe'; touch %s; echo '", marker);
+        ASSERT_TRUE(ca_git_commit_all(dir, malicious, NULL) == CA_OK);
+        ASSERT_TRUE(access(marker, F_OK) != 0);
+    }
     free(groups);
     free(message);
     free(rendered);
     ca_git_status_free(&status);
     snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
     ASSERT_TRUE(system(cmd) == 0);
+    remove(marker);
     return 0;
 }
 
@@ -975,9 +1189,12 @@ int main(void) {
     ASSERT_TRUE(test_builtin_tool_schemas_are_specific() == 0);
     ASSERT_TRUE(test_read_file_truncation_includes_line_count() == 0);
     ASSERT_TRUE(test_bash_stdout_stderr_behavior() == 0);
+    ASSERT_TRUE(test_json_parser_ignores_keys_inside_strings() == 0);
     ASSERT_TRUE(test_code_search_uses_argv_and_limits_matches() == 0);
     ASSERT_TRUE(test_list_files_pretty_json() == 0);
     ASSERT_TRUE(test_write_edit_permission_checks() == 0);
+    ASSERT_TRUE(test_sandbox_modes_and_tool_enforcement() == 0);
+    ASSERT_TRUE(test_sandbox_rejects_symlink_escape_attacks() == 0);
     ASSERT_TRUE(test_agent_conversation_loop_in_library() == 0);
     ASSERT_TRUE(test_agent_state_machine_tool_loop() == 0);
     ASSERT_TRUE(test_agent_llm_retry() == 0);

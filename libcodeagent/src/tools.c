@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -86,6 +87,9 @@ static ca_status tool_definitions_clone(const ca_tool_definition *src,
     if (count == 0) {
         return CA_OK;
     }
+    if (count > SIZE_MAX / sizeof(ca_tool_definition)) {
+        return CA_NO_MEMORY;
+    }
     *dst = (ca_tool_definition *)calloc(count, sizeof(ca_tool_definition));
     if (*dst == NULL) {
         return CA_NO_MEMORY;
@@ -139,6 +143,14 @@ static ca_status check_write_permission(const ca_config *config,
         return ca_set_error(output, "ErrorCategory::Permission|Editing %s requires confirmation", path);
     }
     return ca_set_error(output, "ErrorCategory::Permission|Writing to %s requires confirmation", path);
+}
+
+static ca_status check_sandbox_path(const ca_config *config,
+                                    const char *path,
+                                    int write_access,
+                                    char **output) {
+    ca_status status = ca_sandbox_check_path(config, path, write_access, output);
+    return status == CA_OK ? CA_OK : CA_ERROR;
 }
 
 static size_t count_lines_prefix(const char *text, size_t max_len) {
@@ -212,7 +224,7 @@ ca_status ca_tool_read_file(const char *input_json, char **output, void *userdat
     char *path = NULL;
     char *content = NULL;
     size_t len = 0;
-    (void)userdata;
+    const ca_config *config = (const ca_config *)userdata;
 
     if (output == NULL) {
         return CA_INVALID_ARGUMENT;
@@ -224,6 +236,10 @@ ca_status ca_tool_read_file(const char *input_json, char **output, void *userdat
     if (path[0] == '\0') {
         free(path);
         return ca_set_error(output, "path cannot be empty");
+    }
+    if (check_sandbox_path(config, path, 0, output) != CA_OK) {
+        free(path);
+        return CA_ERROR;
     }
     if (read_file_all(path, &content, &len) != CA_OK) {
         ca_status status = ca_set_error(output, "Failed to read file: %s", strerror(errno));
@@ -269,6 +285,11 @@ ca_status ca_tool_write_file(const char *input_json, char **output, void *userda
         free(path);
         return CA_ERROR;
     }
+    if (check_sandbox_path(config, path, 1, output) != CA_OK) {
+        free(path);
+        free(content);
+        return CA_ERROR;
+    }
     if (check_write_permission(config, "write_file", path, output) != CA_OK) {
         free(path);
         free(content);
@@ -285,10 +306,15 @@ ca_status ca_tool_write_file(const char *input_json, char **output, void *userda
         free(content);
         return ca_set_error(output, "Failed to write file: %s", strerror(errno));
     }
-    if (fwrite(content, 1, strlen(content), file) != strlen(content) || fclose(file) != 0) {
-        free(path);
-        free(content);
-        return ca_set_error(output, "Failed to write file: %s", strerror(errno));
+    {
+        size_t content_len = strlen(content);
+        int write_failed = fwrite(content, 1, content_len, file) != content_len;
+        int close_failed = fclose(file) != 0;
+        if (write_failed || close_failed) {
+            free(path);
+            free(content);
+            return ca_set_error(output, "Failed to write file: %s", strerror(errno));
+        }
     }
     ca_set_error(output, "Successfully wrote %lu bytes to %s", (unsigned long)strlen(content), path);
     free(path);
@@ -332,6 +358,12 @@ ca_status ca_tool_edit_file(const char *input_json, char **output, void *userdat
         free(new_str);
         return ca_set_error(output, "old_str and new_str must be different");
     }
+    if (check_sandbox_path(config, path, 1, output) != CA_OK) {
+        free(path);
+        free(old_str);
+        free(new_str);
+        return CA_ERROR;
+    }
     if (check_write_permission(config, "edit_file", path, output) != CA_OK) {
         free(path);
         free(old_str);
@@ -360,11 +392,16 @@ ca_status ca_tool_edit_file(const char *input_json, char **output, void *userdat
             free(new_str);
             return ca_set_error(output, "Failed to create file: %s", strerror(errno));
         }
-        if (fwrite(new_str, 1, strlen(new_str), file) != strlen(new_str) || fclose(file) != 0) {
-            free(path);
-            free(old_str);
-            free(new_str);
-            return ca_set_error(output, "Failed to create file: %s", strerror(errno));
+        {
+            size_t new_len = strlen(new_str);
+            int write_failed = fwrite(new_str, 1, new_len, file) != new_len;
+            int close_failed = fclose(file) != 0;
+            if (write_failed || close_failed) {
+                free(path);
+                free(old_str);
+                free(new_str);
+                return ca_set_error(output, "Failed to create file: %s", strerror(errno));
+            }
         }
         ca_set_error(output, "Successfully created file %s", path);
         free(path);
@@ -469,7 +506,7 @@ static ca_status list_dir(ca_string_builder *sb, const char *root, const char *r
             snprintf(child_rel, sizeof(child_rel), "%s", entry->d_name);
         }
         snprintf(child_full, sizeof(child_full), "%s/%s", root, child_rel);
-        if (stat(child_full, &st) != 0) {
+        if (lstat(child_full, &st) != 0) {
             continue;
         }
         {
@@ -493,7 +530,7 @@ ca_status ca_tool_list_files(const char *input_json, char **output, void *userda
     char *path = NULL;
     ca_string_builder sb;
     size_t count = 0;
-    (void)userdata;
+    const ca_config *config = (const ca_config *)userdata;
 
     if (output == NULL) {
         return CA_INVALID_ARGUMENT;
@@ -504,6 +541,10 @@ ca_status ca_tool_list_files(const char *input_json, char **output, void *userda
     }
     if (ca_json_get_string(input_json, "path", &path) != CA_OK) {
         path = ca_strdup(".");
+    }
+    if (check_sandbox_path(config, path, 0, output) != CA_OK) {
+        free(path);
+        return CA_ERROR;
     }
     ca_sb_init(&sb);
     ca_sb_append(&sb, "[\n");
@@ -530,6 +571,7 @@ static ca_status read_tmpfile(FILE *file, char **out) {
 }
 
 static ca_status run_argv_capture(char *const argv[],
+                                  const ca_config *config,
                                   char **stdout_out,
                                   char **stderr_out,
                                   int *exit_code) {
@@ -565,6 +607,9 @@ static ca_status run_argv_capture(char *const argv[],
     if (pid == 0) {
         dup2(fileno(stdout_file), STDOUT_FILENO);
         dup2(fileno(stderr_file), STDERR_FILENO);
+        if (ca_sandbox_apply_child(config, 0) != 0) {
+            _exit(126);
+        }
         execvp(argv[0], argv);
         _exit(127);
     }
@@ -631,7 +676,7 @@ ca_status ca_tool_bash(const char *input_json, char **output, void *userdata) {
     char *stdout_text = NULL;
     char *stderr_text = NULL;
     int exit_code = 0;
-    (void)userdata;
+    const ca_config *config = (const ca_config *)userdata;
 
     if (output == NULL) {
         return CA_INVALID_ARGUMENT;
@@ -643,6 +688,10 @@ ca_status ca_tool_bash(const char *input_json, char **output, void *userdata) {
     if (command[0] == '\0') {
         free(command);
         return ca_set_error(output, "command cannot be empty");
+    }
+    if (ca_sandbox_requires_native_process(config)) {
+        free(command);
+        return ca_set_error(output, "Sandbox denied: bash requires native process sandbox support");
     }
     if (ca_contains(command, "rm -rf /") || ca_contains(command, "rm -rf /*") ||
         ca_contains(command, "> /dev/sda") || ca_contains(command, "mkfs") ||
@@ -663,7 +712,7 @@ ca_status ca_tool_bash(const char *input_json, char **output, void *userdata) {
         argv[1] = (char *)"-c";
         argv[2] = command;
         argv[3] = NULL;
-        if (run_argv_capture(argv, &stdout_text, &stderr_text, &exit_code) != CA_OK) {
+        if (run_argv_capture(argv, config, &stdout_text, &stderr_text, &exit_code) != CA_OK) {
             free(command);
             return ca_set_error(output, "Failed to execute command: %s", strerror(errno));
         }
@@ -710,7 +759,7 @@ ca_status ca_tool_code_search(const char *input_json, char **output, void *userd
     char *stdout_text = NULL;
     char *stderr_text = NULL;
     int exit_code = 0;
-    (void)userdata;
+    const ca_config *config = (const ca_config *)userdata;
 
     if (output == NULL) {
         return CA_INVALID_ARGUMENT;
@@ -727,7 +776,18 @@ ca_status ca_tool_code_search(const char *input_json, char **output, void *userd
         path = ca_strdup(".");
     }
     ca_json_get_string(input_json, "file_type", &file_type);
-    ca_json_get_bool(input_json, "case_sensitive", 0, &case_sensitive);
+    if (ca_json_get_bool(input_json, "case_sensitive", 0, &case_sensitive) != CA_OK) {
+        free(pattern);
+        free(path);
+        free(file_type);
+        return ca_set_error(output, "Failed to parse input: invalid boolean field 'case_sensitive'");
+    }
+    if (check_sandbox_path(config, path, 0, output) != CA_OK) {
+        free(pattern);
+        free(path);
+        free(file_type);
+        return CA_ERROR;
+    }
 
     {
         char *argv[11];
@@ -746,7 +806,7 @@ ca_status ca_tool_code_search(const char *input_json, char **output, void *userd
         argv[argc++] = pattern;
         argv[argc++] = path;
         argv[argc] = NULL;
-        if (run_argv_capture(argv, &stdout_text, &stderr_text, &exit_code) != CA_OK) {
+        if (run_argv_capture(argv, config, &stdout_text, &stderr_text, &exit_code) != CA_OK) {
             free(pattern);
             free(path);
             free(file_type);
@@ -946,6 +1006,9 @@ ca_status ca_tool_registry_register(ca_tool_registry *registry,
                                        function,
                                        userdata);
         }
+    }
+    if (registry->tool_count > SIZE_MAX / sizeof(ca_tool_definition) - 1) {
+        return CA_NO_MEMORY;
     }
     next = (ca_tool_definition *)realloc(registry->tools,
                                          sizeof(ca_tool_definition) * (registry->tool_count + 1));

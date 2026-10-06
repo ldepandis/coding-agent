@@ -6,6 +6,7 @@
 
 #include "internal.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -77,6 +78,8 @@ void ca_config_init_defaults(ca_config *config) {
     config->max_tool_retries = CODEAGENT_MAX_RETRIES;
     config->tool_retry_delay_ms = CODEAGENT_RETRY_DELAY_MS;
     config->provider_timeout_ms = 120000u;
+    config->sandbox_mode = CA_SANDBOX_DISABLED;
+    config->sandbox_network = 0;
 }
 
 void ca_config_free(ca_config *config) {
@@ -126,12 +129,18 @@ ca_status ca_config_clone(const ca_config *src, ca_config *dst) {
     dst->max_tool_retries = src->max_tool_retries;
     dst->tool_retry_delay_ms = src->tool_retry_delay_ms;
     dst->provider_timeout_ms = src->provider_timeout_ms;
+    dst->sandbox_mode = src->sandbox_mode;
+    dst->sandbox_network = src->sandbox_network;
     if (dst->provider == NULL || dst->model == NULL || dst->persistence_path == NULL ||
         dst->obsidian_vault_path == NULL) {
         ca_config_free(dst);
         return CA_NO_MEMORY;
     }
     if (src->trusted_path_count > 0) {
+        if (src->trusted_path_count > SIZE_MAX / sizeof(char *)) {
+            ca_config_free(dst);
+            return CA_NO_MEMORY;
+        }
         dst->trusted_paths = (char **)calloc(src->trusted_path_count, sizeof(char *));
         if (dst->trusted_paths == NULL) {
             ca_config_free(dst);

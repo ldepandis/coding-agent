@@ -35,13 +35,17 @@ Important configure options:
 - `--enable-codeagentctl-builtin` compiles `libcodeagent` sources directly into `codeagentctl`;
 - `--disable-library --enable-codeagentctl-builtin` builds only the built-in CLI binary without producing a separate library;
 - `--enable-sanitizers` enables ASan/UBSan where supported;
-- `--disable-curl` builds providers without live HTTP transport;
-- `--disable-curses` builds the CLI without curses terminal setup.
+- `--disable-hardening` disables compiler/linker hardening probes;
+- `--disable-curl` builds providers without live HTTP transport.
 
-`libucl` is mandatory when `codeagentctl` is enabled. Library-only builds must not
-require `libucl`.
+`libucl` and curses/ncurses are mandatory when `codeagentctl` is enabled. Library-only
+builds must not require them.
 
 Installation exports public headers and `codeagent.pc`.
+
+Compiler hardening is enabled by default. The configure script probes support before
+using hardening flags such as stack protector, `_FORTIFY_SOURCE`, strict-overflow
+avoidance, and ELF RELRO/NOW linker flags where the platform accepts them.
 
 ## Public API
 
@@ -59,7 +63,7 @@ The API covers:
 - sessions, markdown serialization, filesystem session manager, and `ca_storage_adapter`;
 - command discovery;
 - token and cost estimates;
-- permissions and trusted paths;
+- permissions, trusted paths, and sandbox policy;
 - Git workflow helpers;
 - Obsidian note helpers;
 - in-memory multi-agent progress tracking;
@@ -109,6 +113,39 @@ status/body diagnostics where available.
 `codeagentctl` is only the frontend. It loads client config, renders terminal output, and
 routes slash commands.
 
+## Sandbox
+
+`libcodeagent` exposes sandbox policy through `ca_config` and enforces it inside built-in
+tools. Frontends choose the mode; the library performs the checks.
+
+Supported modes:
+
+- `disabled`: preserves legacy behavior and performs no sandbox checks;
+- `read_only`: permits reads inside the workspace or trusted paths and denies writes;
+- `workspace_write`: permits reads and writes inside the workspace or trusted paths;
+- `full_access`: explicitly disables sandbox path restrictions.
+
+Workspace paths are relative paths that do not escape through `..`. Absolute paths must
+match `trusted_paths` exactly or as path-boundary children. Built-in `read_file`,
+`write_file`, `edit_file`, `list_files`, and `code_search` apply these path checks before
+touching the filesystem. Sandbox checks canonicalize existing paths, canonicalize parent
+directories for new writes, reject symlink escapes that resolve outside the allowed
+roots, and reject regular-file hardlinks because they can alias data outside the
+sandbox.
+
+Native child-process backends are used where the target operating system provides a
+usable per-process primitive:
+
+- OpenBSD: `unveil()` plus `pledge()`;
+- Linux: Landlock filesystem rules, with `PR_SET_NO_NEW_PRIVS`;
+- macOS: Seatbelt profiles through `sandbox_init()`;
+- FreeBSD: Capsicum capability mode.
+
+NetBSD and DragonFly BSD currently use the custom path-policy fallback because they do
+not expose an equivalent process sandbox backend through a small portable C API here.
+On platforms without a native process sandbox, the custom sandbox still enforces path
+policy and rejects `bash` execution when sandboxing is active.
+
 ## Threading
 
 `libcodeagent` does not create worker threads. Separate object instances may be used on
@@ -127,3 +164,8 @@ make codeagent-cppcheck
 
 The static-analysis targets may return status `77` when the corresponding tool is not
 installed.
+
+Security validation must include red-team style attempts against the local code surface,
+including sandbox escapes, parser confusion, command injection, path traversal,
+symlink/hardlink aliasing, untrusted config input, oversized inputs, and compiler/linker
+hardening regressions.

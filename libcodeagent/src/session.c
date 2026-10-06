@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -108,6 +109,9 @@ ca_status ca_session_append(ca_session *session, const ca_message *message) {
     ca_message *next;
     if (session == NULL || message == NULL) {
         return CA_INVALID_ARGUMENT;
+    }
+    if (session->message_count > SIZE_MAX / sizeof(ca_message) - 1) {
+        return CA_NO_MEMORY;
     }
     next = (ca_message *)realloc(session->messages, sizeof(ca_message) * (session->message_count + 1));
     if (next == NULL) {
@@ -364,6 +368,11 @@ ca_status ca_session_manager_list(ca_session_manager *manager,
             continue;
         }
         snprintf(path, sizeof(path), "%s/%s", manager->directory, entry->d_name);
+        if (count > SIZE_MAX / sizeof(char *) - 1) {
+            closedir(dir);
+            ca_string_list_free(items, count);
+            return CA_NO_MEMORY;
+        }
         next = (char **)realloc(items, sizeof(char *) * (count + 1));
         if (next == NULL) {
             closedir(dir);

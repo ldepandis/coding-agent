@@ -52,7 +52,7 @@ make codeagent-cppcheck
 - built-in tools and external tool registry;
 - runtime config structs;
 - sessions and storage adapters;
-- token/cost, permissions, Git, Obsidian, multi-agent status, diagnostics, and safe auto-fix helpers.
+- token/cost, permissions, sandbox policy, Git, Obsidian, multi-agent status, diagnostics, and safe auto-fix helpers.
 
 `codeagentctl` owns:
 
@@ -67,6 +67,10 @@ functions in `codeagent.h`.
 
 Provider modules are compiled into `libcodeagent`; do not add runtime `.so`/`.dylib`
 loading.
+
+Sandbox enforcement belongs in `libcodeagent`, not in `codeagentctl`. Frontends may parse
+policy from their own config files, but built-in tools and child-process execution must
+enforce it through library code.
 
 ## Public API
 
@@ -89,6 +93,26 @@ make check
 make codeagent-clang-tidy
 make codeagent-cppcheck
 ```
+
+Every C change also requires an aggressive security scan before final handoff:
+
+```sh
+./autogen.sh
+./configure --enable-sanitizers
+make check
+make codeagent-clang-tidy
+make codeagent-cppcheck
+```
+
+Treat the scan as a required engineering activity, not an optional release check.
+Inspect the code for allocation-size overflow before `malloc`/`calloc`/`realloc`,
+NULL dereferences, ownership/lifetime mismatches, unchecked read/write/close errors,
+command injection, path-prefix authorization bypasses, sandbox escapes through
+symlinks/hardlinks or hostile path shapes, parser confusion, compiler/linker hardening
+regressions in produced binaries, and missing regression tests for any security fix.
+
+After running the scan, clean generated Autotools/test artifacts so the working tree
+contains only intentional source, test, and documentation changes.
 
 If Autotools is unavailable in the local environment, state that clearly and run any
 available compiler/test path only as a temporary local validation.

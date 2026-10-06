@@ -37,12 +37,12 @@ Required:
 - C99 compiler such as `clang` or `gcc`;
 - GNU Autotools: `autoconf`, `automake`, `libtool`;
 - `pkg-config`;
-- `libucl` when building `codeagentctl`.
+- `libucl` when building `codeagentctl`;
+- curses/ncurses when building `codeagentctl`.
 
 Optional:
 
 - `libcurl` for live provider HTTP transports;
-- curses/ncurses for terminal setup;
 - `clang-tidy` and `cppcheck` for quality checks;
 - `ripgrep` for the built-in `code_search` tool.
 
@@ -67,8 +67,8 @@ Useful configure variants:
 ./configure --enable-codeagentctl-builtin
 ./configure --disable-library --enable-codeagentctl-builtin
 ./configure --enable-sanitizers
+./configure --disable-hardening
 ./configure --disable-curl
-./configure --disable-curses
 ```
 
 Install:
@@ -112,7 +112,14 @@ The library owns:
 - built-in tools;
 - external tool registration through `ca_tool_registry`;
 - config structs and provider options;
-- session, storage adapter, token/cost, permissions, Git, Obsidian, multi-agent status, and auto-fix helper APIs.
+- session, storage adapter, token/cost, permissions, sandbox policy, Git, Obsidian, multi-agent status, and auto-fix helper APIs.
+
+Sandbox modes are configured through `ca_config` by embedders or through the
+`sandbox { ... }` section in `codeagentctl` UCL config. The library enforces path policy
+for built-in tools and uses native process sandboxing where available, including
+OpenBSD `pledge()`/`unveil()`, Linux Landlock, macOS Seatbelt, and FreeBSD Capsicum for
+child processes. NetBSD and DragonFly BSD use the custom path-policy fallback until a
+small native backend is available.
 
 Provider internals remain private in `libcodeagent/src/provider.h`. Provider modules are compiled
 into `libcodeagent`; runtime loading of `.so`/`.dylib` provider code is intentionally not
@@ -130,6 +137,8 @@ make codeagent-cppcheck
 ```
 
 `clang-tidy` and `cppcheck` targets exit with status `77` when the tool is not installed.
+Compiler hardening is enabled by default where supported and can be disabled with
+`--disable-hardening` for diagnostics or unusual toolchains.
 
 ## Documentation
 

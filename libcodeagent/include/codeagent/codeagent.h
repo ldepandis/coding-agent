@@ -104,6 +104,13 @@ typedef enum {
 } ca_permission_response;
 
 typedef enum {
+    CA_SANDBOX_DISABLED,
+    CA_SANDBOX_READ_ONLY,
+    CA_SANDBOX_WORKSPACE_WRITE,
+    CA_SANDBOX_FULL_ACCESS
+} ca_sandbox_mode;
+
+typedef enum {
     CA_GIT_FILE_MODIFIED,
     CA_GIT_FILE_STAGED,
     CA_GIT_FILE_STAGED_WITH_CHANGES,
@@ -325,6 +332,8 @@ typedef struct ca_config {
     unsigned max_tool_retries;
     unsigned tool_retry_delay_ms;
     unsigned provider_timeout_ms;
+    ca_sandbox_mode sandbox_mode;
+    int sandbox_network;
     /* Opaque provider option storage; access only with ca_config_*provider_option* APIs. */
     void *provider_options;
 } ca_config;
@@ -363,6 +372,9 @@ const char *ca_state_name(ca_agent_state_type state);
 
 /* Returns a static string for an action value. The caller must not free it. */
 const char *ca_action_name(ca_agent_action_type action);
+
+/* Returns a static string for a sandbox mode value. The caller must not free it. */
+const char *ca_sandbox_mode_name(ca_sandbox_mode mode);
 
 /* Duplicates a string with libcodeagent allocation. Free with ca_free(). */
 char *ca_strdup(const char *value);
@@ -437,6 +449,12 @@ ca_status ca_config_set_persistence_path(ca_config *config, const char *path);
 
 /* Sets the Obsidian vault path in config. The value is copied. */
 ca_status ca_config_set_obsidian_vault_path(ca_config *config, const char *path);
+
+/* Sets the sandbox mode used by built-in tools and child process execution. */
+ca_status ca_config_set_sandbox_mode(ca_config *config, ca_sandbox_mode mode);
+
+/* Parses disabled, read_only/read-only, workspace_write/workspace-write, or full_access/full-access. */
+ca_status ca_sandbox_mode_parse(const char *text, ca_sandbox_mode *mode);
 
 /* Sets a provider-specific option by provider name and key. The value is copied. */
 ca_status ca_config_set_provider_option(ca_config *config,

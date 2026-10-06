@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -120,6 +121,9 @@ ca_status ca_sb_append_n(ca_string_builder *sb, const char *text, size_t len) {
 }
 
 ca_status ca_sb_append(ca_string_builder *sb, const char *text) {
+    if (text == NULL) {
+        return CA_INVALID_ARGUMENT;
+    }
     return ca_sb_append_n(sb, text, strlen(text));
 }
 
@@ -180,6 +184,10 @@ ca_status ca_set_error(char **out, const char *fmt, ...) {
         va_end(args);
         return CA_ERROR;
     }
+    if ((size_t)needed == SIZE_MAX) {
+        va_end(args);
+        return CA_NO_MEMORY;
+    }
     *out = (char *)malloc((size_t)needed + 1);
     if (*out == NULL) {
         va_end(args);
@@ -203,7 +211,11 @@ ca_status ca_read_all(FILE *file, char **out, size_t *out_len, size_t max_bytes)
     for (;;) {
         size_t to_read = sizeof(buffer);
         size_t n;
-        if (max_bytes > 0 && total + to_read > max_bytes) {
+        if (max_bytes > 0 && total > max_bytes) {
+            ca_sb_free(&sb);
+            return CA_NO_MEMORY;
+        }
+        if (max_bytes > 0 && to_read > max_bytes - total) {
             to_read = max_bytes - total;
         }
         if (to_read == 0) {

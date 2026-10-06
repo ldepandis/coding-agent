@@ -6,6 +6,7 @@
 
 #include "internal.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -134,6 +135,9 @@ static ca_status clone_messages(const ca_message *src, size_t count, ca_message 
     if (count == 0) {
         return CA_OK;
     }
+    if (count > SIZE_MAX / sizeof(ca_message)) {
+        return CA_NO_MEMORY;
+    }
     *dst = (ca_message *)calloc(count, sizeof(ca_message));
     if (*dst == NULL) {
         return CA_NO_MEMORY;
@@ -159,6 +163,9 @@ static ca_status clone_content_blocks(const ca_content_block *src, size_t count,
     if (count == 0) {
         return CA_OK;
     }
+    if (count > SIZE_MAX / sizeof(ca_content_block)) {
+        return CA_NO_MEMORY;
+    }
     *dst = (ca_content_block *)calloc(count, sizeof(ca_content_block));
     if (*dst == NULL) {
         return CA_NO_MEMORY;
@@ -182,6 +189,9 @@ static ca_status append_message(ca_message **messages, size_t *count, const ca_m
     ca_message *next;
     ca_status status;
 
+    if (*count > SIZE_MAX / sizeof(ca_message) - 1) {
+        return CA_NO_MEMORY;
+    }
     next = (ca_message *)realloc(*messages, sizeof(ca_message) * (*count + 1));
     if (next == NULL) {
         return CA_NO_MEMORY;
@@ -251,6 +261,11 @@ static ca_status process_llm_response(ca_state_machine *machine, ca_agent_action
                 return status;
             }
         } else if (block->type == CA_BLOCK_TOOL_USE) {
+            if (call_count > SIZE_MAX / sizeof(ca_tool_call) - 1) {
+                free_tool_calls(calls, call_count);
+                ca_sb_free(&text);
+                return CA_NO_MEMORY;
+            }
             ca_tool_call *more = (ca_tool_call *)realloc(calls, sizeof(ca_tool_call) * (call_count + 1));
             if (more == NULL) {
                 free_tool_calls(calls, call_count);
@@ -292,6 +307,12 @@ static ca_status process_llm_response(ca_state_machine *machine, ca_agent_action
     if (call_count > 0) {
         char *display = ca_sb_take(&text);
         next.type = CA_STATE_EXECUTING_TOOLS;
+        if (call_count > SIZE_MAX / sizeof(ca_tool_execution)) {
+            state_clear(&next);
+            free_tool_calls(calls, call_count);
+            free(display);
+            return CA_NO_MEMORY;
+        }
         next.executions = (ca_tool_execution *)calloc(call_count, sizeof(ca_tool_execution));
         if (next.executions == NULL) {
             state_clear(&next);
@@ -521,6 +542,10 @@ ca_status ca_state_machine_handle(ca_state_machine *machine,
             next.type = CA_STATE_EXECUTING_TOOLS;
             next.conversation_count = machine->state.conversation_count;
             next.execution_count = machine->state.execution_count;
+            if (next.execution_count > SIZE_MAX / sizeof(ca_tool_execution)) {
+                state_clear(&next);
+                return CA_NO_MEMORY;
+            }
             next.executions = (ca_tool_execution *)calloc(next.execution_count, sizeof(ca_tool_execution));
             if (next.executions == NULL) {
                 state_clear(&next);
@@ -552,6 +577,11 @@ ca_status ca_state_machine_handle(ca_state_machine *machine,
             }
             tool_name_count = next.execution_count;
 
+            if (tool_name_count > SIZE_MAX / sizeof(ca_content_block) ||
+                tool_name_count > SIZE_MAX / sizeof(char *)) {
+                state_clear(&next);
+                return CA_NO_MEMORY;
+            }
             results = (ca_message *)calloc(1, sizeof(ca_message));
             result_blocks = (ca_content_block *)calloc(tool_name_count, sizeof(ca_content_block));
             tool_names = (char **)calloc(tool_name_count, sizeof(char *));

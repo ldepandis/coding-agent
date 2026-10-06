@@ -7,13 +7,17 @@ ACLOCAL_AMFLAGS = -I m4
 AM_CPPFLAGS = \
 	-I$(top_srcdir)/libcodeagent/include \
 	-I$(top_srcdir)/libcodeagent/src \
-	-D_POSIX_C_SOURCE=200809L
+	-D_POSIX_C_SOURCE=200809L \
+	$(CODEAGENT_HARDENING_CPPFLAGS)
 
 AM_CFLAGS = \
 	$(CODEAGENT_WARNING_CFLAGS) \
+	$(CODEAGENT_HARDENING_CFLAGS) \
 	$(CODEAGENT_SANITIZER_CFLAGS)
 
-AM_LDFLAGS = $(CODEAGENT_SANITIZER_LIBS)
+AM_LDFLAGS = \
+	$(CODEAGENT_HARDENING_LDFLAGS) \
+	$(CODEAGENT_SANITIZER_LIBS)
 
 lib_LTLIBRARIES =
 bin_PROGRAMS =
@@ -38,6 +42,7 @@ LIBCODEAGENT_SOURCES = \
 	libcodeagent/src/obsidian.c \
 	libcodeagent/src/permissions.c \
 	libcodeagent/src/provider.c \
+	libcodeagent/src/sandbox.c \
 	libcodeagent/src/session.c \
 	libcodeagent/src/state_machine.c \
 	libcodeagent/src/string_builder.c \

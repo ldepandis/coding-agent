@@ -7,6 +7,7 @@
 #include "internal.h"
 #include "provider.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +27,9 @@ static ca_status clone_tools(const ca_tool_definition *src,
     *dst = NULL;
     if (count == 0) {
         return CA_OK;
+    }
+    if (count > SIZE_MAX / sizeof(ca_tool_definition)) {
+        return CA_NO_MEMORY;
     }
     *dst = (ca_tool_definition *)calloc(count, sizeof(ca_tool_definition));
     if (*dst == NULL) {
@@ -59,10 +63,18 @@ static void bind_builtin_tool_context(ca_agent *agent) {
         return;
     }
     for (i = 0; i < agent->tool_count; i++) {
-        if ((strcmp(agent->tools[i].name, "write_file") == 0 &&
+        if ((strcmp(agent->tools[i].name, "read_file") == 0 &&
+             agent->tools[i].function == ca_tool_read_file) ||
+            (strcmp(agent->tools[i].name, "write_file") == 0 &&
              agent->tools[i].function == ca_tool_write_file) ||
             (strcmp(agent->tools[i].name, "edit_file") == 0 &&
-             agent->tools[i].function == ca_tool_edit_file)) {
+             agent->tools[i].function == ca_tool_edit_file) ||
+            (strcmp(agent->tools[i].name, "list_files") == 0 &&
+             agent->tools[i].function == ca_tool_list_files) ||
+            (strcmp(agent->tools[i].name, "bash") == 0 &&
+             agent->tools[i].function == ca_tool_bash) ||
+            (strcmp(agent->tools[i].name, "code_search") == 0 &&
+             agent->tools[i].function == ca_tool_code_search)) {
             agent->tools[i].userdata = &agent->config;
         }
     }

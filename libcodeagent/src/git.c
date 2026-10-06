@@ -7,33 +7,82 @@
 #include "internal.h"
 
 #include <ctype.h>
+#include <errno.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 static char *run_command_capture(const char *repository_path, const char *command) {
-    ca_string_builder shell;
-    FILE *pipe;
     char buffer[4096];
-    char *result = NULL;
-    ca_sb_init(&shell);
-    if (repository_path != NULL && repository_path[0] != '\0') {
-        ca_sb_append(&shell, "cd '");
-        ca_sb_append(&shell, repository_path);
-        ca_sb_append(&shell, "' && ");
-    }
-    ca_sb_append(&shell, command);
-    pipe = popen(shell.data == NULL ? command : shell.data, "r");
-    ca_sb_free(&shell);
-    if (pipe == NULL) {
+    ca_string_builder out;
+    int pipefd[2];
+    pid_t pid;
+    ssize_t n;
+
+    if (command == NULL || pipe(pipefd) != 0) {
         return ca_strdup("");
     }
-    ca_sb_init(&shell);
-    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        ca_sb_append(&shell, buffer);
+    pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return ca_strdup("");
     }
-    pclose(pipe);
-    result = ca_sb_take(&shell);
-    return result == NULL ? ca_strdup("") : result;
+    if (pid == 0) {
+        close(pipefd[0]);
+        if (repository_path != NULL && repository_path[0] != '\0' && chdir(repository_path) != 0) {
+            _exit(127);
+        }
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    ca_sb_init(&out);
+    while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
+        if (ca_sb_append_n(&out, buffer, (size_t)n) != CA_OK) {
+            ca_sb_free(&out);
+            close(pipefd[0]);
+            waitpid(pid, NULL, 0);
+            return ca_strdup("");
+        }
+    }
+    close(pipefd[0]);
+    waitpid(pid, NULL, 0);
+    {
+        char *result = ca_sb_take(&out);
+        return result == NULL ? ca_strdup("") : result;
+    }
+}
+
+static int run_git_argv(const char *repository_path, char *const argv[]) {
+    pid_t pid;
+    int status = 0;
+    if (argv == NULL || argv[0] == NULL) {
+        return -1;
+    }
+    pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        if (repository_path != NULL && repository_path[0] != '\0' && chdir(repository_path) != 0) {
+            _exit(127);
+        }
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return -1;
+        }
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
 static ca_git_file_status_kind parse_status_kind(const char *line) {
@@ -51,6 +100,9 @@ static ca_git_file_status_kind parse_status_kind(const char *line) {
 
 static ca_status append_file(ca_git_status *status, const char *path, ca_git_file_status_kind kind) {
     ca_git_file_status *next;
+    if (status->file_count > SIZE_MAX / sizeof(ca_git_file_status) - 1) {
+        return CA_NO_MEMORY;
+    }
     next = (ca_git_file_status *)realloc(status->files, sizeof(ca_git_file_status) * (status->file_count + 1));
     if (next == NULL) {
         return CA_NO_MEMORY;
@@ -265,8 +317,6 @@ ca_status ca_git_generate_commit_message(const ca_git_status *status, char **out
 ca_status ca_git_commit_all(const char *repository_path, const char *message, char **out_message) {
     ca_git_status status;
     char *generated = NULL;
-    char *cmd;
-    ca_string_builder sb;
     ca_status rc;
     if (out_message != NULL) {
         *out_message = NULL;
@@ -286,14 +336,12 @@ ca_status ca_git_commit_all(const char *repository_path, const char *message, ch
         message = generated;
     }
     ca_git_status_free(&status);
-    run_command_capture(repository_path, "git add -A >/dev/null 2>&1");
-    ca_sb_init(&sb);
-    ca_sb_append(&sb, "git commit -m '");
-    ca_sb_append(&sb, message);
-    ca_sb_append(&sb, "' >/dev/null 2>&1");
-    cmd = ca_sb_take(&sb);
-    free(run_command_capture(repository_path, cmd == NULL ? "git commit" : cmd));
-    free(cmd);
+    {
+        char *add_argv[] = {(char *)"git", (char *)"add", (char *)"-A", NULL};
+        char *commit_argv[] = {(char *)"git", (char *)"commit", (char *)"-m", (char *)message, NULL};
+        run_git_argv(repository_path, add_argv);
+        run_git_argv(repository_path, commit_argv);
+    }
     if (out_message != NULL) {
         *out_message = ca_strdup(message);
     }

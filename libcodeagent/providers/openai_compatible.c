@@ -7,6 +7,7 @@
 #include "internal.h"
 #include "provider.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -130,6 +131,10 @@ static char *copy_json_object(const char *start, const char **after) {
 }
 
 static ca_status append_block(ca_provider_response *response, ca_content_block block) {
+    if (response->content_count > SIZE_MAX / sizeof(ca_content_block) - 1) {
+        ca_content_block_free(&block);
+        return CA_NO_MEMORY;
+    }
     ca_content_block *next = (ca_content_block *)realloc(response->content,
                                                           sizeof(ca_content_block) * (response->content_count + 1));
     if (next == NULL) {

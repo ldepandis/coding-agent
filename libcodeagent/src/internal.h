@@ -42,4 +42,11 @@ const char *ca_config_provider_option_value(const ca_config *config,
                                             const char *env_name,
                                             const char *fallback);
 
+ca_status ca_sandbox_check_path(const ca_config *config,
+                                const char *path,
+                                int write_access,
+                                char **output);
+int ca_sandbox_requires_native_process(const ca_config *config);
+int ca_sandbox_apply_child(const ca_config *config, int needs_network);
+
 #endif

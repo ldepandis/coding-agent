@@ -38,6 +38,29 @@ make codeagent-clang-tidy
 make codeagent-cppcheck
 ```
 
+## Mandatory Security Scan
+
+Every time C source code is changed, run an aggressive security pass before finishing:
+
+```sh
+./autogen.sh
+./configure --enable-sanitizers
+make check
+make codeagent-clang-tidy
+make codeagent-cppcheck
+```
+
+The pass must look specifically for memory-allocation risks, integer overflows before
+`malloc`/`calloc`/`realloc`, NULL handling, ownership/lifetime mistakes, unchecked I/O
+errors, path trust-boundary bypasses, sandbox escapes through symlinks/hardlinks or
+hostile path shapes, command injection, parser confusion bugs, and compiler/linker
+hardening regressions in the produced binaries.
+
+When a defect is fixed, add or update regression tests that would have caught it.
+If any required scanner is unavailable, record that explicitly and run the strongest
+available substitute instead. Remove generated build/test artifacts from the working
+tree before handing work back.
+
 ## State Machine
 
 When modifying `libcodeagent/src/state_machine.c`:
@@ -66,3 +89,6 @@ Provider-specific options must use the generic config option API.
 Built-in tools live in `libcodeagent/src/tools.c`. External tools are registered with
 `ca_tool_registry`. Tool output strings are allocated by the library and freed by callers
 with `ca_free()` unless the specific function documents otherwise.
+
+Sandbox enforcement for built-in tools and child processes must stay in `libcodeagent`.
+Clients may configure policy, but must not be the only enforcement layer.

@@ -26,7 +26,19 @@ values from the frontend.
 ## Config
 
 `codeagentctl` uses `codeagentctl/src/config.c` to load UCL config and populate `ca_config`.
-`libucl` is mandatory for CLI builds.
+`libucl` and curses/ncurses are mandatory for CLI builds. `configure` must fail when
+`codeagentctl` is enabled and either dependency is unavailable.
+
+The optional `sandbox` section maps directly to `ca_config`:
+
+```ucl
+sandbox {
+  mode = "disabled"; # disabled, read_only, workspace_write, full_access
+  network = false;
+}
+```
+
+The CLI only parses these values. Sandbox enforcement belongs to `libcodeagent`.
 
 ## Slash Commands
 

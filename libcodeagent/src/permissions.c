@@ -6,6 +6,7 @@
 
 #include "internal.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -81,6 +82,9 @@ ca_status ca_config_add_trusted_path(ca_config *config, const char *path) {
     if (config == NULL || path == NULL || path[0] == '\0') {
         return CA_INVALID_ARGUMENT;
     }
+    if (config->trusted_path_count > SIZE_MAX / sizeof(char *) - 1) {
+        return CA_NO_MEMORY;
+    }
     next = (char **)realloc(config->trusted_paths,
                             sizeof(char *) * (config->trusted_path_count + 1));
     if (next == NULL) {
@@ -95,6 +99,18 @@ ca_status ca_config_add_trusted_path(ca_config *config, const char *path) {
     return CA_OK;
 }
 
+static int path_has_trusted_prefix(const char *path, const char *trusted) {
+    size_t trusted_len;
+    if (path == NULL || trusted == NULL || trusted[0] == '\0') {
+        return 0;
+    }
+    trusted_len = strlen(trusted);
+    if (strncmp(path, trusted, trusted_len) != 0) {
+        return 0;
+    }
+    return path[trusted_len] == '\0' || trusted[trusted_len - 1] == '/' || path[trusted_len] == '/';
+}
+
 ca_permission_result ca_permission_check_path(const ca_config *config,
                                               const char *path,
                                               int write_access) {
@@ -107,7 +123,7 @@ ca_permission_result ca_permission_check_path(const ca_config *config,
     }
     for (i = 0; i < config->trusted_path_count; i++) {
         const char *trusted = config->trusted_paths[i];
-        if (trusted != NULL && ca_starts_with(path, trusted)) {
+        if (path_has_trusted_prefix(path, trusted)) {
             return CA_PERMISSION_ALLOW;
         }
     }

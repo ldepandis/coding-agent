@@ -12,7 +12,7 @@
 *.la
 *.lo
 *.o
-codeagentctl
+/codeagentctl/codeagentctl
 codeagent.pc
 .DS_Store
 .env
